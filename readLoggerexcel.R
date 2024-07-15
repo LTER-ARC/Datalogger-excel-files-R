@@ -16,7 +16,7 @@ library(rstudioapi)
 #   These files have named sheets "hourly".  For MAT89 the hourly data was changed to half
 #   data in 201??
 
-read.processedfile <- function(filenames,sheetname,var_names) {
+read.processedfile <- function(file_names,sheetname,var_names) {
   
  df<- map_dfr(file_names, function(x) {
     #get the column names of the current excel file
@@ -77,6 +77,64 @@ get_excelfile <- function(x){
 }
 
 
+
+#  Run this to get all the column names from the excel files
+# Edit the saved csv file to create a mapping of column names.
+# Get all the column names for all the files
+var_names_all <- function(excel_files, sheetname) {
+  map_dfr(file_names, function(x) {
+    
+    # Get the column names of excel file x
+    file_col <-
+      if (any(sheetname %in% excel_sheets(x))) {
+        as.data.frame(names(read_excel(
+          x, sheet = sheetname[sheetname %in% excel_sheets(x)], n_max = 0
+        )), stringsAsFactors = FALSE) %>%
+          setNames(nm = "col") %>% #give the column a better name
+          mutate(source_file = basename(x))
+      }
+  })  %>%
+    distinct(col)
+}
+return()
+
+# Read in the data from all the Excel files and rename the columns with standard names.
+
+get_all_data <- function(excel_files, sheetname) {
+  # Read in the mapped variable file
+  var_names <- read_csv(
+    rstudioapi::selectFile(caption = "Select variable names csv file", path =
+                             dirname(file_names[1])),
+    col_names = T
+  )
+  # Go through each file name and read the excel sheet using the col type to specify or exclude columns
+   map_dfr(file_names, function(x) {
+    # Get the column names of the current excel file
+    file_col <-
+      as.data.frame(names(read_excel(
+        x, sheet = sheetname, n_max = 0
+      )), stringsAsFactors = FALSE) %>% setNames(nm = "col") #give it a better name
+    # Match the type to each column name and add a column with matching types and replace any NA with "skip"
+    file_col$type <-
+      var_names$type[match(file_col$col, var_names$var)] %>% replace_na("skip")
+    #Some excel sheets have blank column at the end; so limit to number of named columns
+    cno <- c(1, length(file_col$col))
+    # Now ready to read the data
+    temp_db <- read_excel(
+      x,
+      sheet = sheetname,
+      col_names = T,
+      col_types = file_col$type,
+      cell_cols(cno)
+    )
+    # rename columns to standard names using the newname column of the var_names csv file
+    name_match = match(var_names$var, names(temp_db))
+    names(temp_db)[na.omit(name_match)] = var_names$newnames[!is.na(name_match)]
+    temp_db
+  }
+  , .id = "file_name"  # Add the file names as a column using the names from the list col_names
+  )
+}
 
 # 1990-2023 MAT89 ---------------------------------------------------------
 #  For these years the data logger data was in array base files
@@ -425,27 +483,7 @@ sheetname <- c("SoilsII","3hourly")
 # Get list of all excel files in a directory.
 file_names <-get_excelfile()
 
-#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-####  Run this to get all the column names from the excel files
-# Edit the saved csv file to create a mapping of column names.
-# Get all the column names for all the files
-var_names_unmatched <-  map_dfr(file_names, function(x) {
-  #wb_sheets <-excel_sheets(x)
-  
-  # Get the column names of the current excel file
-  file_col <-
-    if (any(sheetname %in% excel_sheets(x))) {
-        as.data.frame(names(read_excel(
-          x, sheet = sheetname[sheetname %in% excel_sheets(x)], n_max = 0
-        )), stringsAsFactors = FALSE) %>%
-        setNames(nm = "col") %>% #give the column a better name
-        mutate(source_file = basename(x))
-    } 
-  })  %>% 
-  distinct(col) %>% 
-write_csv(file = paste0(dirname(file_names[1]),"var_unmatched2.csv"))
 
-#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 ## Read in the mapped variable file ----
 var_names <- read_csv(rstudioapi::selectFile(caption = "Select variable names csv file",
@@ -511,7 +549,7 @@ df_DHT89_Met <- df_DHT89_Met %>%
 write.csv(df_DHT89_Met, file = paste0(dirname(file_names[1]),"/df_DHT89_Met.csv"), row.names = FALSE)
 write_rds(df_DHT89_Met,file = paste0(dirname(file_names[1]),"/df_DHT89_Met.rds"))
 #*************************************************************************  
-  # error checks ----
+  ## error checks ----
 #************************************************************************
   
 df_tfsmet_1989to2008_with_hobo <- df_tfsmet_1989to2008 %>% subset(!is.na(`date_hobo_logger`))
@@ -579,7 +617,7 @@ df_tfsmet_1989to2008_with_hobo <- df_tfsmet_1989to2008 %>% subset(!is.na(`date_h
     theme_bw() 
   p1
   
-   #Select just temp, rh ----
+   ##Select just temp, rh ----
   df_WSG89_1994to2020_temp_rh <- df_WSG89_1994to2020 %>% 
     select(timestamp = timestampjoin,WSG89_ct_temp_3m = ct_temp_3m,
            WSG89_ct_air107_3m = ct_air107_3m,WSG89_ct_rh = ct_rh_3m)
@@ -641,9 +679,59 @@ df_tfsmet_1989to2008_with_hobo <- df_tfsmet_1989to2008 %>% subset(!is.na(`date_h
   
   t1avg <-t1avg %>%  mutate_at(vars(rh5m.avg),round) %>% mutate_at(vars(airtemp5m.avg,airtemp5m.max,airtemp5m.min),round,2) 
  
+  #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  # Waterplots Met data ----
+  #     
+  #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@  
+  #  For these years the data logger data was in array base files
+  # --- --- ---
+  # Data sheet
+   sheetname <- c("SoilTemp")
+  
+  ## Get list of all excel files in a directory.----
+  file_names <-get_excelfile()
+  
+  # Get a csv file with the variable names for reading in data from an Excel sheet
+  # The csv file containing 3 variables: 
+  #   "var" = column names to be imported from excel
+  #   "type"= type to import as. Can use "skip" to exclude a column of data.
+  #   "newnames" = name to use. May be the same or a new name.
+  # Note that the column names in the csv file need to be quoted since some begin
+  # with numbers and others include banks
 
   
-########------extra--------
+  ##  Step one Get all the column names for all the files ----
+  all_columns_names <- var_names_all(file_names,sheetname)
+  # save the file for editing
+  write_csv(all_columns_names,file = paste0(dirname(file_names[1]),"/waterplot_soiltemp_columns.csv"))
+  
+  ## Read in the mapped variable file ----
+  var_names <- read_csv(rstudioapi::selectFile(caption = "Select variable names csv file",
+                                               path =dirname(file_names[1])), col_names=T, show_col_types = FALSE )
+  ## Get all the data and rename the columns ----
+  df_logger_WP <- read.processedfile(file_names,sheetname,var_names) %>%
+    force_tz("Etc/GMT+9") %>%
+    mutate (timestamp = as.POSIXct(strptime(paste(as.Date(Julian,paste(Year-1,12,31,sep = "-")),
+                                                  sprintf("%04d",as.integer(HourMinute))),"%Y-%m-%d %H%M"),
+                                   tz="Etc/GMT+9")) %>%
+    # Remove columns not needed or will be recalculated. Note date is an excel calculated variable so removing.
+    select(-c(ID,Year,Month, Date)) %>% 
+    mutate(Year_rtm = year(timestamp),Month_rtm = month(timestamp)) %>% 
+    # re-order and rename columns then sort by timestamp
+    select(file_name,timestamp,Julian, HourMinute, Year_rtm, Month_rtm,everything()) %>% 
+    arrange(timestamp) %>%  
+  # NA are from excel files with extra rows 
+    subset(!is.na(timestamp))
+  
+  ## Save files----
+  station <- "WaterPlots1998"
+  range_data <- paste0(date(min(df_logger_WP$timestamp)),"_",date(max(df_logger_WP$timestamp)))
+  write_rds(df_logger_WP, file = paste0(dirname(file_names[1]),"/", station, "_", range_data,".rds"))
+  write.csv(df_logger_WP,
+            file = paste0(dirname(file_names[1]),"/",station, "_", range_data,".csv"),
+            row.names = F)
+
+#------EXTRA Code--------
   df_2004<- df_1989to2008[df_1989to2008$file_name == "2004dltl.xlsx"]
 t1<- subset(t, select = -YEAR)
   sheetslist <- map(file_names, function (x) excel_sheets(x))
